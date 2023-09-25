@@ -6,15 +6,9 @@ from sdv.metadata import SingleTableMetadata
 from sdv.multi_table import HMASynthesizer
 from sdv.single_table import GaussianCopulaSynthesizer
 from sdv.single_table import CTGANSynthesizer
-
-from anonymeter.evaluators import SinglingOutEvaluator
-from anonymeter.evaluators import LinkabilityEvaluator
-from anonymeter.evaluators import InferenceEvaluator
-import matplotlib.pyplot as plt
-
 import pandas as pd
 import argparse
-
+import itertools
 
 
 # 報告分析API
@@ -24,9 +18,11 @@ def print_quality_report(method,datasets,synthetic_data,metadata,num):
         synthetic_data,
         metadata
     )
+    # syntheticDict["Synthetic_{}_{}.csv".format(method,num)] = quality_report.get_score
     #比較最佳品質資料
     if quality_report.get_score() > bestSynthethicData['Overall Score']:
         update_best_situation(method,metadata,quality_report,num)
+    return quality_report.get_score() 
 
     
 # 變更欄位資料類別
@@ -58,7 +54,7 @@ def set_report_metadata(metadata,primaryKey,csvName):
     reportMetadata = SingleTableMetadata.load_from_dict({"primary_key":primaryKey,"columns":metadataDict['tables'][csvName]['columns']})
     return reportMetadata
 
-#取得所有欄位可能性之資料型態
+#取得所有欄位名稱
 def get_columns_name(metadata,csvName):
     metadataDict = metadata.to_dict()
     columnlist = list(metadataDict['tables'][csvName]['columns'].keys())
@@ -73,6 +69,7 @@ def get_total_Sdtypelist(meatadata,columnName,primaryKey):
         if column != primaryKey:
             if meatadata['columns'][column]["sdtype"] != 'categorical':
                 sdtypeDict[column] = [meatadata['columns'][column]["sdtype"],'categorical']
+                twoSdtypeList.append(column)
             else:
                 sdtypeDict[column] = 'categorical'
     return  sdtypeDict
@@ -87,7 +84,37 @@ def update_best_situation(method,metadata,report,num):
     bestSynthethicData['Metadata'] = metadata.to_dict()
     bestSynthethicData['File Name'] = "Synthetic_{}_{}.csv".format(method,num)
 
+def exhaustive_possible(columnName):
 
+    possible_values = [0, 1]
+    single_value = [2]  
+    all_combinations = list(itertools.product(possible_values, repeat=len(twoSdtypeList)))
+    all_combinations = [list(combination) + single_value * (len(columnName)-len(twoSdtypeList)) for combination in all_combinations]
+
+    final_list =[]
+    for i in range(0,len(all_combinations)):
+        a_num = 0
+        b_num = len(twoSdtypeList)
+        final = []
+        for j in range(0,len(all_combinations[i])):
+            # print(j)
+            # print(len(all_combinations[i]))
+            if columnName[j] in twoSdtypeList:
+                final.append(all_combinations[i][a_num])
+                a_num+=1
+            else:
+                # print(b_num)
+                final.append(all_combinations[i][b_num])
+                b_num+=1
+        final_list.append(final)
+    print(len(final_list))
+    # sampling_interval = 100 #每隔100取樣
+
+    # sampled_combinations = final_list[::sampling_interval]
+    # print(len(sampled_combinations))
+    # for i in sampled_combinations:
+    #     print(i)
+    return final_list
 
 
 
@@ -139,65 +166,116 @@ def main():
     #取得所有欄位名稱
     columnName = get_columns_name(multiMetadata,csvName)
     totalSdtypelist = get_total_Sdtypelist(singleMetadata,columnName,args.primarykey)
-    for method in synDataMethods:
-        num = 1
-        for column in columnName:
-            if totalSdtypelist[column] != 'categorical':
-                for sdtype in totalSdtypelist[column]:
-                    if method =='Gaussian':
-                        # reportMetadata = set_report_metadata(sdtype) #此方法須先設定metadata
-                        set_single_column_sdtype(singleMetadata,'總計',sdtype)
-                        synthesizer = GaussianCopulaSynthesizer(singleMetadata)
-                        synthesizer.fit(data_df)
-                        synthetic_data = synthesizer.sample(num_rows=synDataTotal)
-                        # synthetic_data.head() # 觀察新生成資料集
+    for columnname in totalSdtypelist.keys():
+        print("{}:{}".format(columnname,totalSdtypelist[columnname]))
+    totalSampling = exhaustive_possible(columnName)
 
-                        print("--------方法為{}總計欄位類別為{}時資料品質--------".format(method,sdtype))
-                        print_quality_report(method,data_df,synthetic_data,singleMetadata,num)
-                        synthetic_data.to_csv("Synthetic_Data/Synthetic_{}_{}.csv".format(method,num),mode='w',encoding='utf-8-sig')
-                        num+=1
-                    elif method =='CTGAN':
-                        # reportMetadata = set_report_metadata(sdtype) #此方法須先設定metadata
-                        set_single_column_sdtype(singleMetadata,'總計',sdtype)
-                        synthesizer = CTGANSynthesizer(singleMetadata)
-                        synthesizer.fit(data_df)
-                        synthetic_data = synthesizer.sample(num_rows=synDataTotal)
-                        # synthetic_data.head() # 觀察新生成資料集
+    # for method in synDataMethods:
+    #     num = 1
+    #     for column in columnName:
+    #         if totalSdtypelist[column] != 'categorical':
+    #             for sdtype in totalSdtypelist[column]:
+    #                 if method =='Gaussian':
+    #                     # reportMetadata = set_report_metadata(sdtype) #此方法須先設定metadata
+    #                     set_single_column_sdtype(singleMetadata,column,sdtype)
+    #                     synthesizer = GaussianCopulaSynthesizer(singleMetadata)
+    #                     synthesizer.fit(data_df)
+    #                     synthetic_data = synthesizer.sample(num_rows=synDataTotal)
+    #                     # synthetic_data.head() # 觀察新生成資料集
 
-                        print("--------方法為{}總計欄位類別為{}時資料品質--------".format(method,sdtype))
-                        print_quality_report(method,data_df,synthetic_data,singleMetadata,num)
-                        synthetic_data.to_csv("Synthetic_Data/Synthetic_{}_{}.csv".format(method,num),mode='w',encoding='utf-8-sig')
-                        num+=1
-                    elif method == 'HMA':
-                        set_multi_column_sdtype(multiMetadata,csvName,'總計',sdtype)
-                        synthesizer = HMASynthesizer(multiMetadata)
-                        synthesizer.fit(datasets)
+    #                     print("--------方法:{}欄位:{}資料類別:{}時資料品質--------".format(method,column,sdtype))
+    #                     print_quality_report(method,data_df,synthetic_data,singleMetadata,num)
+    #                     synthetic_data.to_csv("Synthetic_Data/Synthetic_{}_{}.csv".format(method,num),mode='w',encoding='utf-8-sig')
+    #                     num+=1
+    #                 elif method =='CTGAN':
+    #                     # reportMetadata = set_report_metadata(sdtype) #此方法須先設定metadata
+    #                     set_single_column_sdtype(singleMetadata,column,sdtype)
+    #                     synthesizer = CTGANSynthesizer(singleMetadata)
+    #                     synthesizer.fit(data_df)
+    #                     synthetic_data = synthesizer.sample(num_rows=synDataTotal)
+    #                     # synthetic_data.head() # 觀察新生成資料集
 
-                        synthetic_data = synthesizer.sample(scale=HMAScale)
-                        # synthetic_data['TestDataset'].head(5) # 觀察新生成資料集
+    #                     print("--------方法:{}欄位:{}資料類別:{}時資料品質--------".format(method,column,sdtype))
+    #                     print_quality_report(method,data_df,synthetic_data,singleMetadata,num)
+    #                     synthetic_data.to_csv("Synthetic_Data/Synthetic_{}_{}.csv".format(method,num),mode='w',encoding='utf-8-sig')
+    #                     num+=1
+    #                 elif method == 'HMA':
+    #                     set_multi_column_sdtype(multiMetadata,csvName,column,sdtype)
+    #                     synthesizer = HMASynthesizer(multiMetadata)
+    #                     synthesizer.fit(datasets)
 
-                        syn_list = [synthetic_data[csvName]]
-                        syn_df=pd.DataFrame(syn_list[0])
+    #                     synthetic_data = synthesizer.sample(scale=HMAScale)
+    #                     # synthetic_data['TestDataset'].head(5) # 觀察新生成資料集
 
-                        # reportMetadata = set_report_metadata(sdtype)
-                        # 產生分析結果
-                        print("--------方法為{}總計欄位類別為{}時資料品質--------".format(method,sdtype))
-                        reportMetadata = set_report_metadata(multiMetadata,args.primarykey,csvName)
-                        get_columns_name(multiMetadata,csvName)
-                        print_quality_report(method,data_df,syn_df,reportMetadata,num)
-                        syn_df.to_csv("Synthetic_Data/Synthetic_{}_{}.csv".format(method,num),mode='w',encoding='utf-8-sig')
-                        num+=1
-    for key in bestSynthethicData.keys():
-        if key != 'Metadata':
-            print('{} : {}'.format(key,bestSynthethicData[key]))
-        else:
-            for column in bestSynthethicData[key]["columns"]:
-                print('{} : {}'.format(column,bestSynthethicData[key]["columns"][column]))
+    #                     syn_list = [synthetic_data[csvName]]
+    #                     syn_df=pd.DataFrame(syn_list[0])
+
+    #                     # reportMetadata = set_report_metadata(sdtype)
+    #                     # 產生分析結果
+    #                     print("--------方法:{}欄位:{}資料類別:{}時資料品質--------".format(method,column,sdtype))
+    #                     reportMetadata = set_report_metadata(multiMetadata,args.primarykey,csvName)
+    #                     get_columns_name(multiMetadata,csvName)
+    #                     print_quality_report(method,data_df,syn_df,reportMetadata,num)
+    #                     syn_df.to_csv("Synthetic_Data/Synthetic_{}_{}.csv".format(method,num),mode='w',encoding='utf-8-sig')
+    #                     num+=1
     
+        
+    for num,sampling in enumerate(totalSampling): # 經過抽樣篩選後的可能性
+        for i,type in enumerate(sampling):
+            if type != 2:
+                set_single_column_sdtype(singleMetadata,columnName[i],commonSdtypeDict[type])
+                set_multi_column_sdtype(multiMetadata,csvName,columnName[i],commonSdtypeDict[type])
+        for method in synDataMethods:
+
+            if method =='Gaussian':
+                synthesizer = GaussianCopulaSynthesizer(singleMetadata)
+                synthesizer.fit(data_df)
+                synthetic_data = synthesizer.sample(num_rows=synDataTotal)
+                # synthetic_data.head() # 觀察新生成資料集
+                print(f"--------方法:{method}_{num}資料品質如下--------")
+                score = print_quality_report(method,data_df,synthetic_data,singleMetadata,num)
+                synthetic_data.to_csv("Synthetic_Data/Synthetic_{}_{}.csv".format(method,num+1),mode='w',encoding='utf-8-sig')
+                syntheticList.append(["Synthetic_{}_{}.csv".format(method,num+1),score,singleMetadata.to_dict()]) #儲存所有可能性之metadata 
+            if method =='CTGAN':
+                synthesizer = CTGANSynthesizer(singleMetadata)
+                synthesizer.fit(data_df)
+                synthetic_data = synthesizer.sample(num_rows=synDataTotal)
+                # synthetic_data.head() # 觀察新生成資料集
+                print(f"--------方法:{method}_{num}資料品質如下--------")
+                score = print_quality_report(method,data_df,synthetic_data,singleMetadata,num)
+                synthetic_data.to_csv("Synthetic_Data/Synthetic_{}_{}.csv".format(method,num+1),mode='w',encoding='utf-8-sig')
+                syntheticList.append(["Synthetic_{}_{}.csv".format(method,num+1),score,singleMetadata.to_dict()]) #儲存所有可能性之metadata
+            if method =='HMA':
+                synthesizer = HMASynthesizer(multiMetadata)
+                synthesizer.fit(datasets)
+                synthetic_data = synthesizer.sample(scale=HMAScale)
+                # synthetic_data['TestDataset'].head(5) # 觀察新生成資料集
+                print(f"--------方法:{method}_{num}資料品質如下--------")
+                syn_list = [synthetic_data[csvName]]
+                syn_df=pd.DataFrame(syn_list[0])
+                reportMetadata = set_report_metadata(multiMetadata,args.primarykey,csvName)
+                # get_columns_name(multiMetadata,csvName)
+                score = print_quality_report(method,data_df,syn_df,reportMetadata,num)
+                syn_df.to_csv("Synthetic_Data/Synthetic_{}_{}.csv".format(method,num+1),mode='w',encoding='utf-8-sig')
+                syntheticList.append(["Synthetic_{}_{}.csv".format(method,num+1),score,singleMetadata.to_dict()]) #儲存所有可能性之metadata
+    df = pd.DataFrame(syntheticList)
+    df.columns=["FileName","QualityScore","Metadata"]
+    df.to_csv('總抽樣及其結果.csv',mode='w',encoding='utf-8-sig')
+            
+
+                
+
+
+
+
     
-
-
-
+    # for key in bestSynthethicData.keys():
+    #     if key != 'Metadata':
+    #         print('{} : {}'.format(key,bestSynthethicData[key]))
+    #     else:
+    #         for column in bestSynthethicData[key]["columns"]:
+    #             print('{} : {}'.format(column,bestSynthethicData[key]["columns"][column]))
+    
     # 產生視覺化資料分析圖
     # quality_report.get_visualization('Column Shapes')
     # for name in columnName:
@@ -211,7 +289,6 @@ def main():
     #     fig.show()
 
 
-
 if __name__ == '__main__':
     args = get_args()
     # 參數設定  
@@ -219,9 +296,11 @@ if __name__ == '__main__':
     num = 0 #匯出csv檔名名稱用
     HMAScale = 2 # HMA方法生成的新資料倍數
     synDataTotal = 1000 #高斯及CTGAN所需，欲生成資料筆數
-    stringSdtype = 'categorical'
+    commonSdtypeDict = { 0: 'numerical' , 1: 'categorical' , 2 :'categorical'}
     synDataMethods = ['Gaussian','CTGAN','HMA']
-    # synDataMethods = []
+    syntheticList = [] # 儲存所有生成資料之統計分數
+    # synDataMethods = ['HMA']
+    twoSdtypeList = [] # 擁有兩種資料型別的欄位
     bestSynthethicData = {"Method":"","Overall Score":0,"Column Shapes":0,"Column Pair Trends":0,"Metadata":"","File Name":""}
     totalSdtypelist = {} #宣告一個空字典用來放置所有欄位可能之資料型態
 
@@ -229,11 +308,6 @@ if __name__ == '__main__':
     # totalSdtypelist = ['numerical','categorical'] # "總計"欄位之資料類型可能性()
     main()
     
-
-
-
-
-
 
 
 
